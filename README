@@ -1,0 +1,47 @@
+This Python program allows two or more documents to be compared for writing style.
+
+I originally it wrote because I thought two blogs written ostensibly by different people 
+were actually the same person. Thanks to this little program, I discovered I was
+almost certainly wrong. Surprisngly, there is no well-known Python package for
+doing this. There are some other things on github but after a little research I
+decided to write my own.
+
+The basis of the analysis is to look for words and bigrams (groups of two consecutive
+words) that are common between pairs of documents. This sounds pretty simple but
+it seems to be pretty much state of the art.
+
+It also measures the average sentence length and frequency of comma usage.
+Sentence length turns out to be a remarkably strong indicator of consistent
+authorship, tested by considering documents known to be written by the same
+person.
+
+Usage
+-----
+
+./stylometry.py [options] file(s)1 file(s)2 ...
+
+Each file can be either a file, a directory, or a glob (e.g. wildcard). All
+matching files will be considered. A summary for each one gives the average sentence
+length and variation (standard deviation / average), and the same for the number of
+commas per sentence.
+
+It is followed by a list of pairs of files, in order of how well they match
+(best first). The match is a metric based (normally) on bigram commonality, normalised
+so the best match is 1 and the others increase depending on how bad the match is.
+
+Options
+-------
+
+-B    order by bigram match (default)
+-h    help
+-T    order by trigram match - this is only useful for large (>10,000 word) documents
+-v    verbose - if there are exactly two files, show the matching and non-matching
+      bigrams (or words or trigrams as appropriate)
+-W    order by word match
+
+There are some others which are useful for development and debugging.
+
+Requirements and Restrictions
+-----------------------------
+
+Requires Python 3.8. Does not use any packages which are not part of the standard distribtion.
