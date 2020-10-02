@@ -20,10 +20,12 @@ class n_gram(object):
 
     def __init__(self, n, max_entries=DEFAULT_MAX_ENTRIES):
         self.entries = {}
+        self.key_scores = {}
         self.n = n
         self.previous = []
         self.max_entries = max_entries
         self.total_entries = 0
+        self.titles = None
 
     def set_max_entries(self, n):
         self.max_entries = n
@@ -35,6 +37,7 @@ class n_gram(object):
             self.entries[key] = self.entries.get(key, 0) + count
             self.previous = self.previous[1:]
         self.total_entries += count
+        self.titles = None
 
     def update(self, other):
         if self.n != other.n:
@@ -44,8 +47,14 @@ class n_gram(object):
             self.total_entries += n
 
     def __iter__(self):
+        return self._iter(lambda e: e[1])
+
+    def sorted_by(self, sort_fn):
+        return self._iter(lambda e: sort_fn(e[0]))
+
+    def _iter(self, sort_fn):
         self.sorted = [ (k,n) for k,n in self.entries.items() ]
-        self.sorted.sort(key=lambda e: e[1], reverse=True)
+        self.sorted.sort(key=sort_fn, reverse=True)
         for k in self.sorted[:self.max_entries]:
             yield(k[0], self.entries[k[0]])
 
@@ -67,19 +76,31 @@ class n_gram(object):
         return result
 
     def make_title(self, k):
-        return' '.join([ f'{w:20}' for w in k ])
+        if self.titles is None:
+            self.titles = {}
+            lengths = [0] * self.n
+            for i in range(self.n):
+                for kk in self.entries.keys():
+                    lengths[i] = max(lengths[i], len(kk[i]))
+            print(lengths)
+            for kk in self.entries.keys():
+                title = ' '.join([ w + ' '*(l - len(w)) for l,w in zip(lengths, kk) ])
+                self.titles[kk] = title
+            self.title_length = sum(lengths) + self.n - 1
+        return self.titles.get(k, self.title_length)
 
     def compare(self, other):
         self.score = 0
         self.good = set()
         self.bad = set()
+        self.key_scores = {}
         keys = set()
         keys.update(self.entries.keys(), other.entries.keys())
         for k in keys:
             s1 = self.entries.get(k, 0)
             s2 = other.entries.get(k, 0)
             smax = max(s1, s2)
-            mult = math.sqrt(smax)
+            mult = smax
             if s1*s2 == 0:
                 ratio = 0
                 self.bad.add(k)
@@ -94,6 +115,7 @@ class n_gram(object):
             else:
                 score = ratio - 0.5
             score *= mult
+            self.key_scores[k] = score
             self.score += score
         return max(self.score, 0)
 
@@ -105,6 +127,8 @@ class document(object):
         self.sentences = 0
         self.sentence_avg = self.sentence_sd = self.comma_avg = self.comma_sd = 0
         self.word_count = 0
+        self.score_total = 0
+        self.score_count = 0
         self.n_grams = { i: n_gram(i) for i in range(1,4) }
         if filename:
             text = self.load_file()
@@ -171,8 +195,13 @@ class document(object):
         r = self.inputs[0].compare(self.inputs[1], word_threshold=threshold, bigram_threshold=threshold)
         return r
 
+    def add_score(self, score):
+        self.score_total += score
+        self.score_count += 1
+
     def __str__(self):
         return f'{self.filename:50} words : {self.word_count:5}  ' + \
+            f'avg score: {self.score_total / (self.score_count or 1):6.2f} ' + \
             f'avg sentence : {self.sentence_avg:5.1f} sd { self.sentence_sd:5.2f}  ' + \
             f'commas/sentence : {self.comma_avg:5.2f} sd { self.comma_sd:5.2f}'
 
@@ -225,9 +254,10 @@ class document(object):
         result = []
         n_gram = self.n_grams[n]
         n_gram.set_max_entries(how_many)
-        for k,v in n_gram:
+        for k,v in n_gram.sorted_by(lambda k: d1.n_grams[n].key_scores[k]):
             prefix = '+++' if k in d1.n_grams[n] and k in d2.n_grams[n] else '   '
-            result.append(f'{prefix} {n_gram.make_title(k)}   {d1.n_grams[n][k]:5d} {d2.n_grams[n][k]:5d}')
+            result.append(f'{prefix} {n_gram.make_title(k)}   {d1.n_grams[n].key_scores[k]:6.2f}' +
+                          f'{d1.n_grams[n][k]:5d} {d2.n_grams[n][k]:5d}')
         return '\n'.join(result)
 
 class document_set(object):
@@ -262,6 +292,8 @@ class document_set(object):
                 metrics = r.combined.make_metrics(th)
                 r.add_metric(metrics)
             self.result.append(r)
+            d1.add_score(r.order)
+            d2.add_score(r.order)
         max_metric = max([ r.order for r in self.result ])
         for r in self.result:
             r.distance = max_metric / (r.order or 1)
@@ -310,11 +342,10 @@ class parse_args(object) :
         
 def do_combinations():
     documents = document_set(filenames=args.files)
+    result = documents.compare()
     print('\n'.join([ str(d) for d in documents.documents ]))
     print()
-    result = documents.compare()
     print('\n'.join([ str(r) for r in result ]))
-    print()
     if args.verbose and len(args.files)<=2:
         print()
         print(documents.show_details(0, max_entries=args.matches))
