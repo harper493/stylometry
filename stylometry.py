@@ -9,7 +9,8 @@ from glob import glob
 
 DEFAULT_MATCH_NUMBER = 50
 DEFAULT_THRESHOLD = '0.3'
-DEFAULT_NEG_WEIGHT = { 1 : 0.03, 2:0.01, 3:0.001 }
+DEFAULT_NEG_WEIGHT = { 1 : 0.03, 2:0.0, 3:0.001 }
+DEFAULT_MAX_ENTRIES = 100
 
 args = None
 
@@ -17,10 +18,15 @@ sentence_terminators = ( '.', '?', '!' )
 
 class n_gram(object):
 
-    def __init__(self, n):
+    def __init__(self, n, max_entries=DEFAULT_MAX_ENTRIES):
         self.entries = {}
         self.n = n
         self.previous = []
+        self.max_entries = max_entries
+        self.total_entries = 0
+
+    def set_max_entries(self, n):
+        self.max_entries = n
 
     def add_word(self, word, count=1):
         self.previous.append(word)
@@ -28,12 +34,40 @@ class n_gram(object):
             key = tuple(self.previous)
             self.entries[key] = self.entries.get(key, 0) + count
             self.previous = self.previous[1:]
+        self.total_entries += count
 
     def update(self, other):
         if self.n != other.n:
             raise ValueError("incompatible n-gram lengths")
-        for k,n in other.entries:
-            self.add_word(k, n)
+        for k,n in other.entries.items():
+            self.entries[k] = self.entries.get(k, 0) + n
+            self.total_entries += n
+
+    def __iter__(self):
+        self.sorted = [ (k,n) for k,n in self.entries.items() ]
+        self.sorted.sort(key=lambda e: e[1], reverse=True)
+        for k in self.sorted[:self.max_entries]:
+            yield(k[0], self.entries[k[0]])
+
+    def __contains__(self, k):
+        return k in self.entries
+
+    def __getitem__(self, k):
+        return self.entries.get(k, 0)
+
+    def show_one(self, k):
+        count = self.entries.get(k, 0)
+        return f'{self.make_title(k)}  {count:5d} {100*count/self.total_entries:6.2f}%'
+
+    def show(self, max_entries=None, tagfn=lambda k: ''):
+        m = self.max_entries
+        self.max_entries = max_entries or m
+        result = '\n'.join([f'{tagfn(k[0])}{self.show_one(k[0])}' for k in self ])
+        self.max_entries = m
+        return result
+
+    def make_title(self, k):
+        return' '.join([ f'{w:20}' for w in k ])
 
     def compare(self, other):
         self.score = 0
@@ -67,8 +101,6 @@ class document(object):
 
     def __init__(self, filename='', text=None, combine=None):
         self.filename = filename
-        self.words = {}
-        self.bigrams = {}
         self.inputs = []
         self.sentences = 0
         self.sentence_avg = self.sentence_sd = self.comma_avg = self.comma_sd = 0
@@ -116,15 +148,12 @@ class document(object):
             self.sentence_sd = self._stddev(sentences, sentence_total, sentence_tsq) / self.sentence_avg
             self.comma_avg = commas_total / sentences
             self.comma_sd = self._stddev(sentences, commas_total, commas_tsq) / self.comma_avg
-        self._make_counts()
                 
     def combine(self, *inputs):
         self.inputs += inputs
         for d in inputs:
-            for ng in self.n_grams.values():
-                for w, c in d.words.items():
-                    ng.add_word(w, c)
-        self._make_counts()
+            for n in range(1, len(self.n_grams)+1):
+                self.n_grams[n].update(d.n_grams[n])
 
     def compare(self, other, word_threshold, bigram_threshold):
         return [ ng.compare(ong) for ng, ong in zip(self.n_grams.values(), other.n_grams.values()) ]
@@ -146,10 +175,6 @@ class document(object):
         return f'{self.filename:50} words : {self.word_count:5}  ' + \
             f'avg sentence : {self.sentence_avg:5.1f} sd { self.sentence_sd:5.2f}  ' + \
             f'commas/sentence : {self.comma_avg:5.2f} sd { self.comma_sd:5.2f}'
-
-    def _make_counts(self):
-        self.words_counted, self.words_prop = self._make_total(self.words)
-        self.bigrams_counted, self.bigrams_prop = self._make_total(self.bigrams)
 
     def _make_total(self, which):
         counted = [ (w, n) for w, n in which.items() ]
@@ -187,31 +212,27 @@ class document(object):
         return max(math.sqrt(n * sumsq - sum * sum) / (n or 1), 0)
 
     def show_words(self, how_many=100):
-        return '\n'.join([ f'{c[0]:20} {c[1]:5d}  {100*self.words_prop[c[0]]:.2f}%'
-                           for c in self.words_counted[:how_many] ])
+        return self.show_n_grams(1, how_many)
+
+    def show_bigrams(self, how_many=100):
+        return self.show_n_grams(2, how_many)
+
+    def show_ngrams(self, n, how_many):
+        return self.n_grams[n].show(how_many)
 
     def show_bigrams(self, how_many=100):
         return '\n'.join([ f'{c[0][0]+" "+c[0][1]:20} {c[1]:5d}  {100*self.bigrams_prop[c[0]]:.2f}%'
                            for c in self.bigrams_counted[:how_many] ])
 
-    def show_details(self, how_many):
+    def show_details(self, n, how_many):
         d1, d2 = self.inputs[0], self.inputs[1]
-        keys = [ (k,v) for k,v in self.bigrams.items() ]
-        keys.sort(key=lambda k: k[1], reverse=True)
-        g  = [ k for k in d1.bigram_result ]
-        g.sort(key=lambda k: self.bigrams[k], reverse=True)
-        g = g[:how_many]
-        keys = keys[:how_many]
-        result = '\n'.join([ f'{"+++" if k in d1.bigram_result else "   "} {k[0] + " " + k[1]:30} ' +
-                             f'{1000*d1.bigrams_prop[k] if k in d1.bigrams_prop else 0:.4f} ' +
-                             f'{1000*d2.bigrams_prop[k] if k in d2.bigrams_prop else 0:.4f}'
-                             for k in g])
-        result += '\n\n'
-        result += '\n'.join([ f'{"+++" if k[0] in d1.bigram_result else "   "} {k[0][0] + " " + k[0][1]:30} ' +
-                              f'{1000*d1.bigrams_prop[k[0]] if k[0] in d1.bigrams_prop else 0:.4f} ' +
-                              f'{1000*d2.bigrams_prop[k[0]] if k[0] in d2.bigrams_prop else 0:.4f}'
-                              for k in keys ])
-        return result
+        result = []
+        n_gram = self.n_grams[n]
+        n_gram.set_max_entries(how_many)
+        for k,v in n_gram:
+            prefix = '+++' if k in d1.n_grams[n] and k in d2.n_grams[n] else '   '
+            result.append(f'{prefix} {n_gram.make_title(k)}   {d1.n_grams[n][k]:5d} {d2.n_grams[n][k]:5d}')
+        return '\n'.join(result)
 
 class document_set(object):
 
@@ -251,13 +272,19 @@ class document_set(object):
         self.result.sort(key=lambda r: r.distance)
         return self.result
 
+    def show_details(self, n, max_entries=DEFAULT_MAX_ENTRIES):
+        return self.result[n].combined.show_details(2, max_entries)
+
+    def get_first(self):
+        return self.result[0]
+
 class parse_args(object) :
 
     def __init__(self) :
         p = argparse.ArgumentParser()
         p.add_argument('files', nargs='*')
         p.add_argument('-m', '--matches', type=int, default=DEFAULT_MATCH_NUMBER,
-                       help='number of matches to use')
+                       help='number of matches to use or show')
         p.add_argument('-o', '--output', type=str, default='', help='output file name')
         p.add_argument('-t', '--threshold', type=str, default=DEFAULT_THRESHOLD, \
                        help='match threshold or list')
@@ -295,10 +322,12 @@ def do_combinations():
     print()
     if args.verbose and len(args.files)<=2:
         print()
-        print(documents.result[0].combined.show_details(args.matches))
+        print(documents.show_details(0, max_entries=args.matches))
 
 def main():
-    if len(sys.argv) < 2:
+    if len(args.files)==0:
+        print('no input files found')
+    elif len(args.files) < 2:
         filename = sys.argv[1]
         d = document(filename=filename)
         print(d.show_words())
