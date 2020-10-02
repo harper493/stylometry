@@ -152,8 +152,8 @@ class document(object):
     def combine(self, *inputs):
         self.inputs += inputs
         for d in inputs:
-            for n in range(1, len(self.n_grams)+1):
-                self.n_grams[n].update(d.n_grams[n])
+            for me, other in zip(self.n_grams.values(), d.n_grams.values()):
+                me.update(other)
 
     def compare(self, other, word_threshold, bigram_threshold):
         return [ ng.compare(ong) for ng, ong in zip(self.n_grams.values(), other.n_grams.values()) ]
