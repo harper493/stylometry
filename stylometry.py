@@ -212,17 +212,13 @@ class document(object):
         return max(math.sqrt(n * sumsq - sum * sum) / (n or 1), 0)
 
     def show_words(self, how_many=100):
-        return self.show_n_grams(1, how_many)
+        return self.show_ngrams(1, how_many)
 
     def show_bigrams(self, how_many=100):
-        return self.show_n_grams(2, how_many)
+        return self.show_ngrams(2, how_many)
 
     def show_ngrams(self, n, how_many):
         return self.n_grams[n].show(how_many)
-
-    def show_bigrams(self, how_many=100):
-        return '\n'.join([ f'{c[0][0]+" "+c[0][1]:20} {c[1]:5d}  {100*self.bigrams_prop[c[0]]:.2f}%'
-                           for c in self.bigrams_counted[:how_many] ])
 
     def show_details(self, n, how_many):
         d1, d2 = self.inputs[0], self.inputs[1]
@@ -298,9 +294,8 @@ class parse_args(object) :
                        help='order results by word score')
         a = p.parse_args()
         self.files = [ f for f in itertools.chain(*[ glob(f'{f}/*' if os.path.isdir(f) else f)
-                                                     for f in a.files ])
+                                                     for f in a.files or ('.',) ])
                        if not f.endswith('~') and not os.path.isdir(f) ]
-        print(self.files)
         self.files.sort()
         for f in self.files:
             with open(f, 'r') as ff:
@@ -328,11 +323,11 @@ def main():
     if len(args.files)==0:
         print('no input files found')
     elif len(args.files) < 2:
-        filename = sys.argv[1]
-        d = document(filename=filename)
-        print(d.show_words())
-        print()
-        print(d.show_bigrams())
+        d = document(filename=args.files[0])
+        if args.verbose:
+            print(d.show_words())
+            print()
+            print(d.show_bigrams())
     else:
         do_combinations()
 
