@@ -11,6 +11,7 @@ DEFAULT_MATCH_NUMBER = 50
 DEFAULT_THRESHOLD = '0.3'
 DEFAULT_NEG_WEIGHT = { 1 : 0.03, 2:0.0, 3:0.001 }
 DEFAULT_MAX_ENTRIES = 100
+DEFAULT_COMPARE_THRESHOLD = 0.3
 
 args = None
 
@@ -64,6 +65,9 @@ class n_gram(object):
     def __getitem__(self, k):
         return self.entries.get(k, 0)
 
+    def __len__(self):
+        return len(self.entries)
+
     def show_one(self, k):
         count = self.entries.get(k, 0)
         return f'{self.make_title(k)}  {count:5d} {100*count/self.total_entries:6.2f}%'
@@ -97,8 +101,10 @@ class n_gram(object):
         keys = set()
         keys.update(self.entries.keys(), other.entries.keys())
         for k in keys:
-            s1 = self.entries.get(k, 0)
-            s2 = other.entries.get(k, 0)
+            e1 = self.entries.get(k, 0)
+            e2 = other.entries.get(k, 0)
+            s1 = e1 / len(self)
+            s2 = e2 / len(other)
             smax = max(s1, s2)
             mult = smax
             if s1*s2 == 0:
@@ -110,11 +116,11 @@ class n_gram(object):
                 ratio = s1 / s2
             if 1-ratio <= args.threshold:
                 self.good.add(k)
-            if ratio < 0.5:
-                score = (ratio - 0.5) * DEFAULT_NEG_WEIGHT[self.n]
+            if ratio < args.compare:
+                score = (ratio - args.compare) * DEFAULT_NEG_WEIGHT[self.n]
             else:
-                score = ratio - 0.5
-            score *= mult
+                score = ratio - args.compare
+            score *= mult * len(self)
             self.key_scores[k] = score
             self.score += score
         return max(self.score, 0)
@@ -169,9 +175,9 @@ class document(object):
                     ng.add_word(w)
         if sentences > 0:
             self.sentence_avg = sentence_total / sentences
-            self.sentence_sd = self._stddev(sentences, sentence_total, sentence_tsq) / self.sentence_avg
+            self.sentence_sd = self._stddev(sentences, sentence_total, sentence_tsq) / (self.sentence_avg or 1)
             self.comma_avg = commas_total / sentences
-            self.comma_sd = self._stddev(sentences, commas_total, commas_tsq) / self.comma_avg
+            self.comma_sd = self._stddev(sentences, commas_total, commas_tsq) / (self.comma_avg or 1)
                 
     def combine(self, *inputs):
         self.inputs += inputs
@@ -273,7 +279,7 @@ class document_set(object):
 
         def __str__(self):
             result = f'{self.d1.filename:50} {self.d2.filename:50} {self.distance:5.2f}   '
-            result += '   '.join([ ' '.join([ f'{n:6.2f}' for n in m ]) for m in self.metrics ])
+            result += '   '.join([ ' '.join([ f'{n:8.2f}' for n in m ]) for m in self.metrics ])
             return result
 
     def __init__(self, documents=None, filenames=None):
@@ -301,7 +307,7 @@ class document_set(object):
         return self.result
 
     def show_details(self, n, max_entries=DEFAULT_MAX_ENTRIES):
-        return self.result[n].combined.show_details(2, max_entries)
+        return self.result[n].combined.show_details(args.which_n_gram, max_entries)
 
     def get_first(self):
         return self.result[0]
@@ -311,6 +317,8 @@ class parse_args(object) :
     def __init__(self) :
         p = argparse.ArgumentParser()
         p.add_argument('files', nargs='*')
+        p.add_argument('-c', '--compare', type=float, default=DEFAULT_COMPARE_THRESHOLD,
+                       help='breakpoint between positive and negative matches')
         p.add_argument('-m', '--matches', type=int, default=DEFAULT_MATCH_NUMBER,
                        help='number of matches to use or show')
         p.add_argument('-o', '--output', type=str, default='', help='output file name')
@@ -327,7 +335,7 @@ class parse_args(object) :
         a = p.parse_args()
         self.files = [ f for f in itertools.chain(*[ glob(f'{f}/*' if os.path.isdir(f) else f)
                                                      for f in a.files or ('.',) ])
-                       if not f.endswith('~') and not os.path.isdir(f) ]
+                       if not f.endswith('~') and not f.endswith('#') and not os.path.isdir(f) ]
         self.files.sort()
         for f in self.files:
             with open(f, 'r') as ff:
@@ -337,6 +345,7 @@ class parse_args(object) :
         self.threshold = self.thresholds[-1]
         self.verbose = a.verbose
         self.matches = a.matches
+        self.compare = a.compare
         self.which_n_gram = 3 if a.trigram else 2 if a.bigram or not a.word else 1
         self.bigram_order = a.bigram or not a.word
         
@@ -348,7 +357,7 @@ def do_combinations():
     print('\n'.join([ str(r) for r in result ]))
     if args.verbose and len(args.files)<=2:
         print()
-        print(documents.show_details(0, max_entries=args.matches))
+        print(documents.show_details(args.which_n_gram-1, max_entries=args.matches))
 
 def main():
     if len(args.files)==0:
