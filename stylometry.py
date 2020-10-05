@@ -86,12 +86,11 @@ class n_gram(object):
             for i in range(self.n):
                 for kk in self.entries.keys():
                     lengths[i] = max(lengths[i], len(kk[i]))
-            print(lengths)
             for kk in self.entries.keys():
                 title = ' '.join([ w + ' '*(l - len(w)) for l,w in zip(lengths, kk) ])
                 self.titles[kk] = title
             self.title_length = sum(lengths) + self.n - 1
-        return self.titles.get(k, self.title_length)
+        return self.titles.get(k, ' ' * self.title_length)
 
     def compare(self, other):
         self.score = 0
@@ -132,6 +131,7 @@ class document(object):
         self.inputs = []
         self.sentences = 0
         self.sentence_avg = self.sentence_sd = self.comma_avg = self.comma_sd = 0
+        self.bangs = self.bang_avg = 0
         self.word_count = 0
         self.score_total = 0
         self.score_count = 0
@@ -166,6 +166,8 @@ class document(object):
                     commas_tsq += comma_count * comma_count
                     sentence_length = 0
                     comma_count = 0
+                    if ch=='!':
+                        self.bangs += 1
                 elif ch==',':
                     comma_count += 1
             if w:
@@ -178,6 +180,7 @@ class document(object):
             self.sentence_sd = self._stddev(sentences, sentence_total, sentence_tsq) / (self.sentence_avg or 1)
             self.comma_avg = commas_total / sentences
             self.comma_sd = self._stddev(sentences, commas_total, commas_tsq) / (self.comma_avg or 1)
+            self.bang_avg = self.bangs / sentences
                 
     def combine(self, *inputs):
         self.inputs += inputs
@@ -209,7 +212,8 @@ class document(object):
         return f'{self.filename:50} words : {self.word_count:5}  ' + \
             f'avg score: {self.score_total / (self.score_count or 1):6.2f} ' + \
             f'avg sentence : {self.sentence_avg:5.1f} sd { self.sentence_sd:5.2f}  ' + \
-            f'commas/sentence : {self.comma_avg:5.2f} sd { self.comma_sd:5.2f}'
+            f'commas/sentence : {self.comma_avg:5.2f} sd { self.comma_sd:5.2f}  ' + \
+            f'bangs/sentence : { self.bang_avg:6.3f}'
 
     def _make_total(self, which):
         counted = [ (w, n) for w, n in which.items() ]
@@ -257,13 +261,15 @@ class document(object):
 
     def show_details(self, n, how_many):
         d1, d2 = self.inputs[0], self.inputs[1]
-        result = []
         n_gram = self.n_grams[n]
         n_gram.set_max_entries(how_many)
+        result = []
         for k,v in n_gram.sorted_by(lambda k: d1.n_grams[n].key_scores[k]):
             prefix = '+++' if k in d1.n_grams[n] and k in d2.n_grams[n] else '   '
+            d1_count, d2_count = d1.n_grams[n][k], d2.n_grams[n][k]
             result.append(f'{prefix} {n_gram.make_title(k)}   {d1.n_grams[n].key_scores[k]:6.2f}' +
-                          f'{d1.n_grams[n][k]:5d} {d2.n_grams[n][k]:5d}')
+                          f'{d1_count:5d} {1000*d1_count/len(d1.n_grams[n]):6.2f}' + \
+                          f'  {d2_count:5d} {1000*d2_count/len(d2.n_grams[n]):6.2f}')
         return '\n'.join(result)
 
 class document_set(object):
@@ -347,7 +353,6 @@ class parse_args(object) :
         self.matches = a.matches
         self.compare = a.compare
         self.which_n_gram = 3 if a.trigram else 2 if a.bigram or not a.word else 1
-        self.bigram_order = a.bigram or not a.word
         
 def do_combinations():
     documents = document_set(filenames=args.files)
@@ -357,7 +362,7 @@ def do_combinations():
     print('\n'.join([ str(r) for r in result ]))
     if args.verbose and len(args.files)<=2:
         print()
-        print(documents.show_details(args.which_n_gram-1, max_entries=args.matches))
+        print(documents.show_details(0, max_entries=args.matches))
 
 def main():
     if len(args.files)==0:
